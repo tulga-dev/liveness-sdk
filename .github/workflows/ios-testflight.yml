@@ -89,6 +89,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             | tee "$RUNNER_TEMP/archive.log" | grep -E "error|warning: .*sign|ARCHIVE|Provisioning|Signing Identity" || true
           test -d "$RUNNER_TEMP/Runner.xcarchive" || { echo "::error::Archive failed"; tail -n 80 "$RUNNER_TEMP/archive.log"; exit 1; }
+          # Some bundled libraries arrive already signed by their vendor. The export step signs unsigned
+          # code but leaves a foreign signature in place, and Apple then rejects the upload. Remove
+          # those signatures so everything is signed with our distribution identity.
+          APP="$RUNNER_TEMP/Runner.xcarchive/Products/Applications/Runner.app"
+          for f in "$APP"/Frameworks/*.framework "$APP"/Frameworks/*.dylib; do
+            [ -e "$f" ] || continue
+            echo "== $(basename "$f"): $(codesign -dv "$f" 2>&1 | grep -E 'TeamIdentifier|not signed|Signature=' | tr '\n' ' ')"
+            codesign --remove-signature "$f" 2>/dev/null || true
+          done
           cat > "$RUNNER_TEMP/export.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
