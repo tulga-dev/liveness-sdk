@@ -167,7 +167,9 @@ class _LivenessCheckState extends State<LivenessCheck> {
         front,
         ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
+        // YUV on both platforms. The face tracker cannot read the camera plugin's BGRA frames on iOS
+        // (the plugin leaves out the bytes-per-pixel value it needs) and silently reports no face.
+        imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await cam.initialize();
       final detector = await FaceDetector.create(model: FaceDetectionModel.frontCamera);

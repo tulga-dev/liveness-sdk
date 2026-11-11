@@ -1,6 +1,6 @@
 name: liveness_sdk
 description: Head-turn liveness capture for Flutter. Guides the user through random head turns, captures four photos and uploads them to the liveness server.
-version: 0.2.1
+version: 0.2.2
 publish_to: none
 
 environment:

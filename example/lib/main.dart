@@ -157,7 +157,7 @@ class _HomeState extends State<Home> {
               const SizedBox(height: 20),
               Text(_result, style: const TextStyle(fontSize: 18)),
               const SizedBox(height: 12),
-              const Text('SDK 0.2.1 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text('SDK 0.2.2 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ),
