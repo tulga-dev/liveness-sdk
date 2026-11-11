@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
+  image_picker: ^1.1.2
   liveness_sdk:
     path: ../
 

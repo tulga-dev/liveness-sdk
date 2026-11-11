@@ -238,7 +238,8 @@ class _LivenessCheckState extends State<LivenessCheck> {
       if (faces.length == 1) {
         final face = faces.first;
         // Confirmed against the server on saved photos: the tracker's positive yaw is the user's left.
-        yaw = (face.headEulerAngleY ?? 0) * (widget.invertYaw ? -1 : 1); // + = user's left
+        // iOS hands over front-camera frames mirrored (seen on a real iPhone), which flips left and right.
+        yaw = (face.headEulerAngleY ?? 0) * (widget.invertYaw != Platform.isIOS ? -1 : 1); // + = user's left
         pitch = (face.headEulerAngleX ?? 0) * (widget.invertPitch ? -1 : 1); // + = up
         target = _towardsTarget(step, yaw, pitch);
         // Turning clearly the opposite way gets a hint instead of silence.
@@ -417,6 +418,12 @@ class _LivenessCheckState extends State<LivenessCheck> {
         final turned = cv.rotate(cur, flag);
         cur.dispose();
         cur = turned;
+      }
+      if (Platform.isIOS) {
+        // Undo the mirroring of iOS front-camera frames so the server gets the picture as the camera saw it.
+        final flipped = cv.flip(cur, 1);
+        cur.dispose();
+        cur = flipped;
       }
       final (ok, bytes) = cv.imencode('.jpg', cur);
       cur.dispose();

@@ -73,8 +73,9 @@ flutter run --dart-define=SERVER=https://YOUR-LIVENESS-SERVER
 
 ## Directions
 
-The tracker's positive yaw is the user's left and positive pitch is up, with `invertYaw` and
-`invertPitch` both false. Re-check on your target phones; the two switches exist for that.
+Left and right are handled for you on both platforms: iOS delivers front-camera frames mirrored,
+and the SDK corrects for that itself (checked on a real iPhone). Leave `invertYaw` and `invertPitch`
+at false; they exist only as an escape hatch for an unusual device.
 
 ## Things to check on real phones
 

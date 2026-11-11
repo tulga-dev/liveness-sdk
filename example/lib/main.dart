@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:liveness_sdk/liveness_sdk.dart';
 
 const server = String.fromEnvironment('SERVER');
@@ -27,7 +28,7 @@ class _HomeState extends State<Home> {
   String _result = 'Not run yet';
   String _reference = '';
   bool _busy = false;
-  bool _mn = false, _invertYaw = false, _invertPitch = false, _debug = true;
+  bool _mn = false, _debug = true;
 
   Map<String, String> get _headers => {'X-Demo-Passcode': _code.text.trim(), 'Content-Type': 'application/json'};
 
@@ -57,6 +58,30 @@ class _HomeState extends State<Home> {
           : 'Reference photo: none saved. Only liveness will be checked.');
     } catch (e) {
       setState(() => _reference = 'Could not reach the server: $e');
+    }
+  }
+
+  Future<void> _uploadReference() async {
+    if (_code.text.trim().isEmpty) {
+      setState(() => _reference = 'Type the access code first.');
+      return;
+    }
+    try {
+      // Resizing also turns iPhone HEIC photos into JPEG.
+      final picked = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1280, maxHeight: 1280, imageQuality: 90);
+      if (picked == null) return;
+      setState(() => _reference = 'Uploading reference photo…');
+      final res = await http.post(Uri.parse('$server/demo/reference'),
+          headers: _headers, body: jsonEncode({'photo': base64Encode(await picked.readAsBytes())}));
+      if (res.statusCode >= 300) {
+        setState(() => _reference = res.body.contains('reference_no_single_face')
+            ? 'That photo must show exactly one face.'
+            : _explain(res.statusCode, res.body));
+        return;
+      }
+      await _checkReference();
+    } catch (e) {
+      setState(() => _reference = 'Could not upload: $e');
     }
   }
 
@@ -91,8 +116,6 @@ class _HomeState extends State<Home> {
             turns: turns,
             timeLimitSeconds: (s['expires_in_s'] as num).toInt() - 3,
             strings: _mn ? LivenessStrings.mn : const LivenessStrings(),
-            invertYaw: _invertYaw,
-            invertPitch: _invertPitch,
             showDebug: _debug,
             onDone: (o) => Navigator.of(ctx).pop(o),
           ),
@@ -148,16 +171,16 @@ class _HomeState extends State<Home> {
               ),
               if (_reference.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_reference)),
               const SizedBox(height: 8),
+              OutlinedButton(onPressed: _busy ? null : _uploadReference, child: const Text('Choose reference (ID) photo')),
+              const SizedBox(height: 8),
               SwitchListTile(title: const Text('Mongolian prompts'), value: _mn, onChanged: (v) => setState(() => _mn = v)),
               SwitchListTile(title: const Text('Show tracking numbers'), value: _debug, onChanged: (v) => setState(() => _debug = v)),
-              SwitchListTile(title: const Text('Invert left/right'), value: _invertYaw, onChanged: (v) => setState(() => _invertYaw = v)),
-              SwitchListTile(title: const Text('Invert up/down'), value: _invertPitch, onChanged: (v) => setState(() => _invertPitch = v)),
               const SizedBox(height: 8),
               FilledButton(onPressed: _busy ? null : _run, child: const Text('Start liveness check')),
               const SizedBox(height: 20),
               Text(_result, style: const TextStyle(fontSize: 18)),
               const SizedBox(height: 12),
-              const Text('SDK 0.2.2 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text('SDK 0.2.3 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ),

@@ -66,11 +66,12 @@ jobs:
           fi
           PL=ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'The camera is used for the liveness check.'" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'Used to pick the reference photo for the test.'" "$PL"
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PL"
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName '$APP_NAME'" "$PL" || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string '$APP_NAME'" "$PL"
 
       - name: Build (no signing yet)
-        run: flutter build ios --release --no-codesign --build-name=0.2.2 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
+        run: flutter build ios --release --no-codesign --build-name=0.2.3 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
 
       - name: Sign, archive and send to TestFlight
         if: ${{ inputs.upload }}
