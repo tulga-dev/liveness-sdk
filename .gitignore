@@ -1,0 +1,7 @@
+.dart_tool/
+build/
+pubspec.lock
+example/android/
+example/ios/
+example/build/
+*.log

@@ -1,0 +1,21 @@
+name: liveness_sdk
+description: Head-turn liveness capture for Flutter. Guides the user through random head turns, captures four photos and uploads them to the liveness server.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.47.5"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  camera: ^0.12.0
+  face_detection_tflite: ^6.10.1   # MediaPipe face models on-device, Apache-2.0
+  flutter_litert: any              # camera-frame helpers used with face_detection_tflite
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

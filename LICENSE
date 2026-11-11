@@ -1,0 +1,15 @@
+Copyright (c) 2026 tulga-dev. All rights reserved.
+
+This software is made available so that organisations holding a valid API key and
+agreement with the copyright holder can integrate the liveness check into their own
+applications. You may copy and modify it for that purpose only.
+
+Any other use, including redistribution, resale, or use with a service not operated or
+authorised by the copyright holder, requires prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+Third-party components keep their own licences (see pubspec.yaml).
