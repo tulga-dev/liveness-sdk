@@ -70,7 +70,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName '$APP_NAME'" "$PL" || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string '$APP_NAME'" "$PL"
 
       - name: Build (no signing yet)
-        run: flutter build ios --release --no-codesign --build-name=0.2.0 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
+        run: flutter build ios --release --no-codesign --build-name=0.2.1 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
 
       - name: Sign, archive and send to TestFlight
         if: ${{ inputs.upload }}

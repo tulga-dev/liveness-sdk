@@ -126,6 +126,21 @@ class _LivenessCheckState extends State<LivenessCheck> {
   final List<List<Uint8List>> _motion = [];
   DateTime _lastSeen = DateTime.fromMillisecondsSinceEpoch(0);
   double _prevYaw = 0, _prevPitch = 0;
+
+  // Some phones deliver camera frames lying on their side or upside down, whatever the camera
+  // plugin reports. While no face is found, the other rotations are tried in turn and the one
+  // that works is kept. On iOS the preview shows the same frames, so it is turned the same way.
+  static const _rotations = <CameraFrameRotation?>[
+    null,
+    CameraFrameRotation.cw90,
+    CameraFrameRotation.cw180,
+    CameraFrameRotation.cw270,
+  ];
+  int? _rotIndex; // rotation in use; null = what the camera plugin reports
+  bool _rotLocked = false;
+  int _noFaceFrames = 0;
+  int _previewTurns = 0; // quarter turns clockwise applied to the preview (iOS only)
+  double _frameAspect = 4 / 3; // width / height of the frames as delivered
   bool _busy = false;
   bool _finished = false;
   bool _uploading = false;
@@ -181,13 +196,14 @@ class _LivenessCheckState extends State<LivenessCheck> {
     if (_busy || _finished || _uploading || cam == null || detector == null) return;
     _busy = true;
     try {
-      final rotation = rotationForFrame(
+      final reported = rotationForFrame(
         width: image.width,
         height: image.height,
         sensorOrientation: cam.description.sensorOrientation,
         isFrontCamera: true,
         deviceOrientation: cam.value.deviceOrientation,
       );
+      final rotation = _rotIndex == null ? reported : _rotations[_rotIndex!];
       // "standard" mode is the cheapest one that reports yaw and pitch.
       final faces = await detector.detectFacesFromCameraImage(
         image,
@@ -196,6 +212,24 @@ class _LivenessCheckState extends State<LivenessCheck> {
         maxDim: 640,
       );
       if (!mounted || _finished) return;
+
+      // Settle which way up the frames are.
+      if (faces.isNotEmpty) {
+        _noFaceFrames = 0;
+        if (!_rotLocked) {
+          _rotLocked = true;
+          final turns = Platform.isIOS ? _rotations.indexOf(rotation) : 0;
+          if (turns != _previewTurns || _frameAspect != image.width / image.height) {
+            setState(() {
+              _previewTurns = turns;
+              _frameAspect = image.width / image.height;
+            });
+          }
+        }
+      } else if (!_rotLocked && ++_noFaceFrames >= 4) {
+        _noFaceFrames = 0;
+        _rotIndex = ((_rotIndex ?? _rotations.indexOf(reported)) + 1) % _rotations.length;
+      }
 
       final step = _steps[_step];
       double yaw = 0, pitch = 0, target = 0;
@@ -226,7 +260,11 @@ class _LivenessCheckState extends State<LivenessCheck> {
 
       if (widget.showDebug) {
         final dy = (yaw - _frontYaw).toStringAsFixed(0), dp = (pitch - _frontPitch).toStringAsFixed(0);
-        _debug.value = faces.length == 1 ? 'left/right $dy°   up/down $dp°' : 'faces seen: ${faces.length}';
+        _debug.value = '${faces.length == 1 ? 'left/right $dy°   up/down $dp°' : 'faces seen: ${faces.length}'}\n'
+            'frame ${image.width}x${image.height}  sensor ${cam.description.sensorOrientation}  '
+            '${cam.value.deviceOrientation.name}\n'
+            'plugin says ${reported?.name ?? 'none'}  using ${rotation?.name ?? 'none'}'
+            '${_rotLocked ? '' : ' (searching)'}  preview turns $_previewTurns';
         if (_frameNo++ % 4 == 0) {
           debugPrint('LV step=$step faces=${faces.length} yaw=${yaw.toStringAsFixed(1)} '
               'pitch=${pitch.toStringAsFixed(1)} dyaw=$dy dpitch=$dp target=${target.toStringAsFixed(2)} '
@@ -501,7 +539,16 @@ class _LivenessCheckState extends State<LivenessCheck> {
                               ? FittedBox(
                                   fit: BoxFit.cover,
                                   clipBehavior: Clip.hardEdge,
-                                  child: SizedBox(width: size, child: CameraPreview(cam)),
+                                  child: SizedBox(
+                                    width: size,
+                                    child: _previewTurns == 0
+                                        ? CameraPreview(cam)
+                                        // The frames arrive turned; show them the way the tracker reads them.
+                                        : RotatedBox(
+                                            quarterTurns: _previewTurns,
+                                            child: AspectRatio(aspectRatio: _frameAspect, child: cam.buildPreview()),
+                                          ),
+                                  ),
                                 )
                               : const ColoredBox(color: Colors.black),
                         ),
@@ -548,7 +595,11 @@ class _LivenessCheckState extends State<LivenessCheck> {
                 if (ready && !_uploading && widget.showDebug)
                   ValueListenableBuilder<String>(
                     valueListenable: _debug,
-                    builder: (_, v, __) => Text(v, style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                    builder: (_, v, __) => Text(
+                      v,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.amber, fontSize: 12),
+                    ),
                   ),
                 if (showManual)
                   Padding(
