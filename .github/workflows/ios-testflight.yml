@@ -81,9 +81,12 @@ jobs:
           KEY_DIR="$HOME/.appstoreconnect/private_keys"; mkdir -p "$KEY_DIR"
           KEY="$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
           printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          # Archive unsigned, then let the export step sign for the App Store. Signing while archiving
+          # asks for a development profile, which needs a registered test device; distribution does not.
           AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
           xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
-            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Runner.xcarchive" archive "${AUTH[@]}" \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Runner.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             | tee "$RUNNER_TEMP/archive.log" | grep -E "error|warning: .*sign|ARCHIVE|Provisioning|Signing Identity" || true
           test -d "$RUNNER_TEMP/Runner.xcarchive" || { echo "::error::Archive failed"; tail -n 80 "$RUNNER_TEMP/archive.log"; exit 1; }
           cat > "$RUNNER_TEMP/export.plist" <<PLIST
