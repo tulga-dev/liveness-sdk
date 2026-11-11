@@ -45,7 +45,7 @@ jobs:
       - name: Build the APK
         run: |
           flutter pub get
-          flutter build apk --release --target-platform android-arm64 --build-name=0.2.3 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
+          flutter build apk --release --target-platform android-arm64,android-x64 --build-name=0.2.3 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
           cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/liveness-test-0.2.3.apk"
           ls -la "$RUNNER_TEMP"/*.apk
 
