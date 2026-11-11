@@ -1,0 +1,31 @@
+# Copies the APK from an "Android test app (APK)" run into a draft (not public) release,
+# so it can be fetched without going through the Actions artifact storage.
+name: APK to draft release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run number id of the Android build"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: liveness-test-apk
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: out
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la out
+          gh release delete apk-test --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          gh release create apk-test out/*.apk --repo "$GITHUB_REPOSITORY" --draft --target main --title "Android test app (draft)" --notes "Test build. Not a public release."
