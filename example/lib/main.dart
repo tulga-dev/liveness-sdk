@@ -1,20 +1,18 @@
-// Test app. It talks to two servers on the computer running the emulator:
-//   BACKEND  the stand-in for the NBFI's backend (demo_nbfi_backend.py, port 8001).
-//            It holds the API key and the customer's government photo.
-//   SERVER   the liveness server (port 8000). The app only uploads photos to it.
-// The app never holds an API key and never sees the government photo.
+// Test app for the SDK on a real phone.
 //
-// On an Android emulator the defaults work as they are (10.0.2.2 = the host computer).
-// On a real phone:
-//   flutter run --dart-define=SERVER=http://<pc-ip>:8000 --dart-define=BACKEND=http://<pc-ip>:8001
+// It talks to the hosted liveness server's test endpoints (/demo/...), the same ones the
+// web test page uses. The tester types the access code; no API key is in the app.
+// The reference photo is the one saved through the web test page, if any.
+//
+// The server address is given when building:
+//   flutter run --dart-define=SERVER=https://YOUR-LIVENESS-SERVER
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:liveness_sdk/liveness_sdk.dart';
 
-const server = String.fromEnvironment('SERVER', defaultValue: 'http://10.0.2.2:8000');
-const backend = String.fromEnvironment('BACKEND', defaultValue: 'http://10.0.2.2:8001');
+const server = String.fromEnvironment('SERVER');
 
 void main() => runApp(const MaterialApp(home: Home()));
 
@@ -25,15 +23,63 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
+  final _code = TextEditingController();
   String _result = 'Not run yet';
-  bool _mn = false, _invertYaw = false, _invertPitch = false;
+  String _reference = '';
+  bool _busy = false;
+  bool _mn = false, _invertYaw = false, _invertPitch = false, _debug = true;
+
+  Map<String, String> get _headers => {'X-Demo-Passcode': _code.text.trim(), 'Content-Type': 'application/json'};
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  String _explain(int status, String body) {
+    if (status == 401) return 'Wrong access code.';
+    if (status == 404) return 'The test page is switched off on the server.';
+    if (status == 429) return 'Too many tries. Wait a minute.';
+    return 'HTTP $status $body';
+  }
+
+  Future<void> _checkReference() async {
+    try {
+      final res = await http.get(Uri.parse('$server/demo/status'), headers: _headers);
+      if (res.statusCode != 200) {
+        setState(() => _reference = _explain(res.statusCode, res.body));
+        return;
+      }
+      final saved = (jsonDecode(res.body) as Map<String, dynamic>)['reference_saved'] == true;
+      setState(() => _reference = saved
+          ? 'Reference photo: saved. Your face will be matched against it.'
+          : 'Reference photo: none saved. Only liveness will be checked.');
+    } catch (e) {
+      setState(() => _reference = 'Could not reach the server: $e');
+    }
+  }
 
   Future<void> _run() async {
-    setState(() => _result = 'Creating session…');
+    if (server.isEmpty) {
+      setState(() => _result = 'This build has no server address. Build with --dart-define=SERVER=...');
+      return;
+    }
+    if (_code.text.trim().isEmpty) {
+      setState(() => _result = 'Type the access code first.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _result = 'Creating session…';
+    });
     try {
-      final res = await http.post(Uri.parse('$backend/start'));
-      if (res.statusCode != 201) throw 'start: HTTP ${res.statusCode} ${res.body}';
+      await _checkReference();
+      final started = DateTime.now();
+      final res = await http.post(Uri.parse('$server/demo/start'), headers: _headers);
+      if (res.statusCode != 201) throw _explain(res.statusCode, res.body);
       final s = jsonDecode(res.body) as Map<String, dynamic>;
+      final turns = (s['turns'] as List).cast<String>();
       if (!mounted) return;
 
       final outcome = await Navigator.of(context).push<LivenessOutcome>(
@@ -42,12 +88,12 @@ class _HomeState extends State<Home> {
             serverUrl: server,
             sessionId: s['session_id'] as String,
             sessionToken: s['session_token'] as String,
-            turns: (s['turns'] as List).cast<String>(),
+            turns: turns,
             timeLimitSeconds: (s['expires_in_s'] as num).toInt() - 3,
             strings: _mn ? LivenessStrings.mn : const LivenessStrings(),
             invertYaw: _invertYaw,
             invertPitch: _invertPitch,
-            showDebug: true,
+            showDebug: _debug,
             onDone: (o) => Navigator.of(ctx).pop(o),
           ),
         ),
@@ -61,33 +107,57 @@ class _HomeState extends State<Home> {
         return;
       }
 
-      final verdict = await http.get(Uri.parse('$backend/result/${s['session_id']}'));
-      final v = jsonDecode(verdict.body) as Map<String, dynamic>;
+      // The server may still be analysing for a moment.
+      Map<String, dynamic> v = {};
+      for (var i = 0; i < 20; i++) {
+        final verdict = await http.get(Uri.parse('$server/demo/result/${s['session_id']}'), headers: _headers);
+        if (verdict.statusCode != 200) throw _explain(verdict.statusCode, verdict.body);
+        v = jsonDecode(verdict.body) as Map<String, dynamic>;
+        if (v['status'] == 'live' || v['status'] == 'not_live') break;
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
       final score = v['face_match_score'];
-      setState(() => _result = 'Turns asked: ${(s['turns'] as List).join(', ')}\n'
-          'Result: ${v['status']}\n'
+      final seconds = DateTime.now().difference(started).inMilliseconds / 1000;
+      setState(() => _result = '${v['status'] == 'live' ? 'LIVE' : 'NOT LIVE'}\n'
           'Reason: ${v['reason']}\n'
-          'Match with government photo: ${score == null ? 'not checked' : (score as num).toStringAsFixed(2)}'
-          '${score == null ? '' : ' (needs ${v['face_match_threshold']})'}');
+          'Turns asked: ${turns.join(', ')}\n'
+          'Match with reference: ${score == null ? 'not checked' : '${(score as num).toStringAsFixed(2)} (needs ${v['face_match_threshold']})'}\n'
+          'Time taken: ${seconds.toStringAsFixed(1)} s');
     } catch (e) {
       setState(() => _result = 'Error: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Liveness test')),
-        body: Padding(
+        appBar: AppBar(title: const Text('Liveness SDK test')),
+        body: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              TextField(
+                controller: _code,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(labelText: 'Access code', border: OutlineInputBorder()),
+                onSubmitted: (_) => _checkReference(),
+              ),
+              if (_reference.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_reference)),
+              const SizedBox(height: 8),
               SwitchListTile(title: const Text('Mongolian prompts'), value: _mn, onChanged: (v) => setState(() => _mn = v)),
+              SwitchListTile(title: const Text('Show tracking numbers'), value: _debug, onChanged: (v) => setState(() => _debug = v)),
               SwitchListTile(title: const Text('Invert left/right'), value: _invertYaw, onChanged: (v) => setState(() => _invertYaw = v)),
               SwitchListTile(title: const Text('Invert up/down'), value: _invertPitch, onChanged: (v) => setState(() => _invertPitch = v)),
-              FilledButton(onPressed: _run, child: const Text('Start liveness check')),
+              const SizedBox(height: 8),
+              FilledButton(onPressed: _busy ? null : _run, child: const Text('Start liveness check')),
               const SizedBox(height: 20),
               Text(_result, style: const TextStyle(fontSize: 18)),
+              const SizedBox(height: 12),
+              const Text('SDK 0.2.0 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ),

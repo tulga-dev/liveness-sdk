@@ -1,0 +1,104 @@
+# Builds the SDK's test app for iPhone and sends it to TestFlight.
+# Run it by hand: Actions tab -> "iOS test app to TestFlight" -> Run workflow.
+# Repository secrets needed: ASC_KEY_P8 (full text of the App Store Connect key file), ASC_KEY_ID,
+# ASC_ISSUER_ID and LIVENESS_SERVER (address of the liveness server the test app talks to).
+name: iOS test app to TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Send the build to TestFlight (untick to only check that it builds)"
+        type: boolean
+        default: true
+
+env:
+  BUNDLE_ID: mn.kycliveness.test
+  APP_NAME: Liveness Test
+  TEAM_ID: Z5CRU7U3QC
+  FLUTTER_VERSION: "3.47.9"
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    env:
+      LIVENESS_SERVER: ${{ secrets.LIVENESS_SERVER }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    defaults:
+      run:
+        working-directory: example
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Tool versions
+        run: |
+          xcodebuild -version
+          flutter --version
+
+      - name: Check the code
+        run: |
+          (cd .. && flutter pub get && flutter analyze)
+          flutter pub get
+          flutter analyze
+
+      - name: Create the iOS project
+        run: |
+          if [ -z "$LIVENESS_SERVER" ]; then echo "::error::The repository secret LIVENESS_SERVER is missing."; exit 1; fi
+          flutter create --platforms=ios --org mn.kycliveness .
+          flutter build ios --release --no-codesign --config-only --dart-define=SERVER="$LIVENESS_SERVER"
+          P=ios/Runner.xcodeproj/project.pbxproj
+          echo "Bundle identifiers before:"; grep -o 'PRODUCT_BUNDLE_IDENTIFIER = [^;]*;' "$P" | sort -u
+          # App target: our bundle id, our team, iOS 15. The test target keeps its own id.
+          perl -0pi -e 's/PRODUCT_BUNDLE_IDENTIFIER = (?![^;]*RunnerTests)[^;]*;/PRODUCT_BUNDLE_IDENTIFIER = $ENV{BUNDLE_ID};\n\t\t\t\tDEVELOPMENT_TEAM = $ENV{TEAM_ID};/g' "$P"
+          perl -pi -e 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$P"
+          echo "Bundle identifiers after:"; grep -o 'PRODUCT_BUNDLE_IDENTIFIER = [^;]*;' "$P" | sort -u
+          if [ -f ios/Podfile ]; then
+            perl -pi -e "s/^#? *platform :ios, *'[0-9.]+'/platform :ios, '15.0'/" ios/Podfile
+            grep -n "platform :ios" ios/Podfile || true
+          fi
+          PL=ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'The camera is used for the liveness check.'" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PL"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName '$APP_NAME'" "$PL" || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string '$APP_NAME'" "$PL"
+
+      - name: Build (no signing yet)
+        run: flutter build ios --release --no-codesign --build-name=0.2.0 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
+
+      - name: Sign, archive and send to TestFlight
+        if: ${{ inputs.upload }}
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ -z "$ASC_KEY_P8" ] || [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ]; then echo "::error::A repository secret is missing (ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID)."; exit 1; fi
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"; mkdir -p "$KEY_DIR"
+          KEY="$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Runner.xcarchive" archive "${AUTH[@]}" \
+            | tee "$RUNNER_TEMP/archive.log" | grep -E "error|warning: .*sign|ARCHIVE|Provisioning|Signing Identity" || true
+          test -d "$RUNNER_TEMP/Runner.xcarchive" || { echo "::error::Archive failed"; tail -n 80 "$RUNNER_TEMP/archive.log"; exit 1; }
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          sed -i '' 's/^          //' "$RUNNER_TEMP/export.plist"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Runner.xcarchive" -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
+            -exportPath "$RUNNER_TEMP/export" "${AUTH[@]}" 2>&1 | tee "$RUNNER_TEMP/export.log" | tail -n 40
+          grep -q "EXPORT SUCCEEDED\|Upload succeeded\|UPLOAD SUCCEEDED" "$RUNNER_TEMP/export.log" || { echo "::error::Upload to TestFlight failed"; exit 1; }
+          rm -f "$KEY"

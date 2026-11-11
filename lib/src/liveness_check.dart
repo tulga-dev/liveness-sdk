@@ -9,6 +9,7 @@ import 'package:face_detection_tflite/face_detection_tflite.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_litert/flutter_litert.dart';
 import 'package:http/http.dart' as http;
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 import 'strings.dart';
 
@@ -74,6 +75,11 @@ class LivenessCheck extends StatefulWidget {
   /// Colour of the progress ring.
   final Color accentColor;
 
+  /// Also upload a short burst of small frames taken during each head turn, so the server can
+  /// check that the head really moved through the turn (still photos shown one after another
+  /// fail that check). Leave on unless the server is an old version.
+  final bool sendMotion;
+
   const LivenessCheck({
     super.key,
     required this.serverUrl,
@@ -90,6 +96,7 @@ class LivenessCheck extends StatefulWidget {
     this.manualCaptureAfter = const Duration(seconds: 6),
     this.showDebug = false,
     this.accentColor = const Color(0xFF2EBD85),
+    this.sendMotion = true,
   });
 
   @override
@@ -111,6 +118,14 @@ class _LivenessCheckState extends State<LivenessCheck> {
   int _hold = 0;
   int _frameNo = 0;
   double _frontYaw = 0, _frontPitch = 0;
+
+  // Motion burst: what the camera saw on the way to the current pose, and the bursts already chosen.
+  static const _seenEvery = Duration(milliseconds: 90);
+  static const _seenMax = 24;
+  final List<_Seen> _seen = [];
+  final List<List<Uint8List>> _motion = [];
+  DateTime _lastSeen = DateTime.fromMillisecondsSinceEpoch(0);
+  double _prevYaw = 0, _prevPitch = 0;
   bool _busy = false;
   bool _finished = false;
   bool _uploading = false;
@@ -195,6 +210,16 @@ class _LivenessCheckState extends State<LivenessCheck> {
       } else {
         _setHint(faces.isEmpty ? widget.strings.noFace : widget.strings.oneFaceOnly);
       }
+      // Remember this frame for the motion burst (turn steps only).
+      if (widget.sendMotion && step != 'front' && DateTime.now().difference(_lastSeen) >= _seenEvery) {
+        final frame = prepareCameraFrameFromImage(image, rotation: rotation);
+        if (frame != null) {
+          _lastSeen = DateTime.now();
+          _seen.add(_Seen(frame, yaw, pitch, faces.length == 1));
+          if (_seen.length > _seenMax) _seen.removeAt(0);
+        }
+      }
+
       // Smooth the ring a little so it glides instead of jumping.
       final p = target.clamp(0.0, 1.0);
       _progress.value = 0.5 * _progress.value + 0.5 * p;
@@ -232,7 +257,12 @@ class _LivenessCheckState extends State<LivenessCheck> {
       if (step == 'front') {
         _frontYaw = yaw;
         _frontPitch = pitch;
+      } else if (widget.sendMotion) {
+        _motion.add(_pickMotion(yaw, pitch));
       }
+      _prevYaw = yaw;
+      _prevPitch = pitch;
+      _seen.clear();
       _hold = 0;
       _stepStarted = DateTime.now();
       if (_step + 1 < _steps.length) {
@@ -270,6 +300,92 @@ class _LivenessCheckState extends State<LivenessCheck> {
     return 0;
   }
 
+  /// From everything seen during this turn, up to four frames spread along the way from the
+  /// previous pose to the new one, as small JPEGs.
+  List<Uint8List> _pickMotion(double yaw, double pitch) {
+    final vy = yaw - _prevYaw, vp = pitch - _prevPitch, d2 = vy * vy + vp * vp;
+    final picks = <_Seen>[];
+    if (d2 > 0) {
+      double along(_Seen s) => ((s.yaw - _prevYaw) * vy + (s.pitch - _prevPitch) * vp) / d2;
+      for (final t in const [0.2, 0.4, 0.6, 0.8]) {
+        _Seen? best;
+        for (final s in _seen) {
+          if (!s.oneFace || (along(s) - t).abs() > 0.15) continue;
+          if (best == null || (along(s) - t).abs() < (along(best) - t).abs()) best = s;
+        }
+        if (best != null && !picks.contains(best)) picks.add(best);
+      }
+      picks.sort((a, b) => along(a).compareTo(along(b)));
+    }
+    if (picks.length < 2) {
+      // Tracking gave too little (for example a manual capture): spread evenly in time instead.
+      picks.clear();
+      for (var j = 1; j <= 4 && _seen.isNotEmpty; j++) {
+        final s = _seen[math.min(_seen.length - 1, _seen.length * j ~/ 5)];
+        if (!picks.contains(s)) picks.add(s);
+      }
+    }
+    final out = <Uint8List>[];
+    for (final s in picks) {
+      final jpeg = _toJpeg(s.frame);
+      if (jpeg != null) out.add(jpeg);
+    }
+    if (widget.showDebug) debugPrint('LV motion frames=${out.length} of ${_seen.length} seen');
+    return out;
+  }
+
+  /// A camera frame as an upright JPEG with its longest side at most 480 pixels, or null if it
+  /// cannot be converted. Mirrors the decoding the face tracker itself does.
+  static Uint8List? _toJpeg(CameraFrame frame) {
+    try {
+      final plan = frame.decodePlan();
+      final layout = plan.sourceLayout;
+      final src = cv.Mat.create(
+        rows: layout.rows,
+        cols: layout.cols,
+        type: layout.channels == 4 ? cv.MatType.CV_8UC4 : cv.MatType.CV_8UC1,
+      );
+      layout.copyTo(src.data, frame.bytes);
+      final code = switch (plan.conversion) {
+        CameraFrameConversion.bgra2bgr => cv.COLOR_BGRA2BGR,
+        CameraFrameConversion.rgba2bgr => cv.COLOR_RGBA2BGR,
+        CameraFrameConversion.yuv2bgrNv12 => cv.COLOR_YUV2BGR_NV12,
+        CameraFrameConversion.yuv2bgrNv21 => cv.COLOR_YUV2BGR_NV21,
+        CameraFrameConversion.yuv2bgrI420 => cv.COLOR_YUV2BGR_I420,
+      };
+      var cur = cv.cvtColor(src, code);
+      src.dispose();
+      if (plan.hasStridePadding) {
+        final cropped = cur.region(cv.Rect(0, 0, plan.visibleWidth, plan.visibleHeight)).clone();
+        cur.dispose();
+        cur = cropped;
+      }
+      final longest = math.max(cur.cols, cur.rows);
+      if (longest > 480) {
+        final k = 480 / longest;
+        final small = cv.resize(cur, ((cur.cols * k).toInt(), (cur.rows * k).toInt()), interpolation: cv.INTER_LINEAR);
+        cur.dispose();
+        cur = small;
+      }
+      final flag = switch (plan.rotation) {
+        CameraFrameRotation.cw90 => cv.ROTATE_90_CLOCKWISE,
+        CameraFrameRotation.cw180 => cv.ROTATE_180,
+        CameraFrameRotation.cw270 => cv.ROTATE_90_COUNTERCLOCKWISE,
+        null => null,
+      };
+      if (flag != null) {
+        final turned = cv.rotate(cur, flag);
+        cur.dispose();
+        cur = turned;
+      }
+      final (ok, bytes) = cv.imencode('.jpg', cur);
+      cur.dispose();
+      return ok ? bytes : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _upload() async {
     setState(() => _uploading = true);
     try {
@@ -284,7 +400,10 @@ class _LivenessCheckState extends State<LivenessCheck> {
               'Authorization': 'Bearer ${widget.sessionToken}',
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({'frames': _photos.map(base64Encode).toList()}),
+            body: jsonEncode({
+              'frames': _photos.map(base64Encode).toList(),
+              if (widget.sendMotion) 'motion': [for (final burst in _motion) burst.map(base64Encode).toList()],
+            }),
           )
           .timeout(const Duration(seconds: 20));
       if (res.statusCode == 200) {
@@ -305,6 +424,8 @@ class _LivenessCheckState extends State<LivenessCheck> {
     if (_finished) return;
     _finished = true;
     _photos.clear();
+    _seen.clear();
+    _motion.clear();
     _ticker?.cancel();
     if (mounted) widget.onDone(outcome);
   }
@@ -450,6 +571,14 @@ class _LivenessCheckState extends State<LivenessCheck> {
   }
 }
 
+/// One camera frame remembered during a head turn, with the head angles the tracker read in it.
+class _Seen {
+  final CameraFrame frame;
+  final double yaw, pitch;
+  final bool oneFace;
+  const _Seen(this.frame, this.yaw, this.pitch, this.oneFace);
+}
+
 /// The ring around the camera circle.
 ///
 /// The ring is made of short tick marks.
@@ -507,7 +636,7 @@ class _RingPainter extends CustomPainter {
       } else {
         for (final d in done) {
           final da = _angle[d];
-          if (d != step && da != null && apart(a, da) <= _span / 2) color = accent.withOpacity(0.6);
+          if (d != step && da != null && apart(a, da) <= _span / 2) color = accent.withValues(alpha: 0.6);
         }
         if (target != null) {
           final dist = apart(a, target);

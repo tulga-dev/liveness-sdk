@@ -8,7 +8,7 @@ read by your backend; the app is only told the upload is complete.
 On-device face tracking uses `face_detection_tflite` (MediaPipe models, Apache-2.0).
 It only guides the capture. The security decision is made by the server.
 
-**Status:** pilot. `stable` (0.1.0) has run end to end on an Android emulator. Not yet run on a real phone.
+**Status:** pilot. `stable` (0.1.0) has run end to end on an Android emulator. `main` and `beta` (0.2.0) add a burst of frames per head turn and are still being tested on devices.
 
 The screen shows the face in a circle with a ring of tick marks. For each step the ticks on the
 side to turn towards light up as the head moves, and the photo is taken automatically when that
@@ -62,8 +62,14 @@ A failed or timed-out check uses up the session. To retry, have your backend cre
 
 ## Test app
 
-`example/` is a small app for trying the SDK against a liveness server and a stand-in for your
-backend that holds the API key. The app holds no API key.
+`example/` is a small app for trying the SDK on a phone. It needs the address of a liveness server
+that has its test endpoints switched on, and the access code for them; no API key is in the app.
+
+```sh
+cd example
+flutter create . --platforms=android,ios
+flutter run --dart-define=SERVER=https://YOUR-LIVENESS-SERVER
+```
 
 ## Directions
 

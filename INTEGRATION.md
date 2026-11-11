@@ -2,8 +2,8 @@
 
 For developers adding the liveness check to a Flutter app and its backend.
 
-**Status: pilot.** The check has passed end to end on an Android emulator. It has not yet
-been run on a real Android phone or on iOS. Please report anything that fails.
+**Status: pilot.** Please report anything that fails. Use the `stable` branch unless we have
+agreed otherwise.
 
 ## What you receive
 
