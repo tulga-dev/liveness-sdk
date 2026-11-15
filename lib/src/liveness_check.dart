@@ -32,7 +32,11 @@ class LivenessOutcome {
 
   /// Extra detail for logs, e.g. the server's error code. Not for showing to users.
   final String? detail;
-  const LivenessOutcome(this.status, [this.detail]);
+
+  /// The photos that were uploaded, in order (front, then one per turn). Only filled when the
+  /// check ran with `showDebug: true`; for looking at on a test phone, never for storing.
+  final List<Uint8List>? debugPhotos;
+  const LivenessOutcome(this.status, [this.detail, this.debugPhotos]);
 }
 
 /// Full-screen capture flow. Push it as a route; it calls [onDone] exactly once.
@@ -291,11 +295,17 @@ class _LivenessCheckState extends State<LivenessCheck> {
         if (++_hold < _holdFrames) return;
       }
 
-      // Pose reached: take the photo that will be uploaded.
+      // Pose reached. The photo that is uploaded is this very frame, the one the tracker just
+      // judged: no shutter delay (the head cannot have moved on), no flash, and the same upright,
+      // un-mirrored picture on every phone. A separate still photo is only the fallback.
       _progress.value = 1;
-      final file = await cam.takePicture();
-      final bytes = await file.readAsBytes();
-      unawaited(File(file.path).delete().catchError((_) => File(file.path)));
+      final poseFrame = prepareCameraFrameFromImage(image, rotation: rotation);
+      var bytes = poseFrame == null ? null : _toJpeg(poseFrame, maxSide: 640);
+      if (bytes == null) {
+        final file = await cam.takePicture();
+        bytes = await file.readAsBytes();
+        unawaited(File(file.path).delete().catchError((_) => File(file.path)));
+      }
       if (!mounted || _finished) return;
       if (widget.showDebug) debugPrint('LV captured step=$step manual=$manual bytes=${bytes.length}');
 
@@ -380,9 +390,9 @@ class _LivenessCheckState extends State<LivenessCheck> {
     return out;
   }
 
-  /// A camera frame as an upright JPEG with its longest side at most 480 pixels, or null if it
-  /// cannot be converted. Mirrors the decoding the face tracker itself does.
-  static Uint8List? _toJpeg(CameraFrame frame) {
+  /// A camera frame as an upright JPEG with its longest side at most [maxSide] pixels, or null if
+  /// it cannot be converted. Mirrors the decoding the face tracker itself does.
+  static Uint8List? _toJpeg(CameraFrame frame, {int maxSide = 480}) {
     try {
       final plan = frame.decodePlan();
       final layout = plan.sourceLayout;
@@ -407,8 +417,8 @@ class _LivenessCheckState extends State<LivenessCheck> {
         cur = cropped;
       }
       final longest = math.max(cur.cols, cur.rows);
-      if (longest > 480) {
-        final k = 480 / longest;
+      if (longest > maxSide) {
+        final k = maxSide / longest;
         final small = cv.resize(cur, ((cur.cols * k).toInt(), (cur.rows * k).toInt()), interpolation: cv.INTER_LINEAR);
         cur.dispose();
         cur = small;
@@ -459,7 +469,7 @@ class _LivenessCheckState extends State<LivenessCheck> {
           )
           .timeout(const Duration(seconds: 20));
       if (res.statusCode == 200) {
-        _finish(const LivenessOutcome(LivenessStatus.completed));
+        _finish(LivenessOutcome(LivenessStatus.completed, null, widget.showDebug ? List.of(_photos) : null));
       } else {
         _finish(LivenessOutcome(LivenessStatus.uploadError, 'HTTP ${res.statusCode} ${res.body}'));
       }

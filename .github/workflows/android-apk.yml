@@ -45,12 +45,12 @@ jobs:
       - name: Build the APK
         run: |
           flutter pub get
-          flutter build apk --release --target-platform android-arm64,android-x64 --build-name=0.2.4 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
-          cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/liveness-test-0.2.4.apk"
+          flutter build apk --release --target-platform android-arm64,android-x64 --build-name=0.2.5 --build-number=${{ github.run_number }} --dart-define=SERVER="$LIVENESS_SERVER"
+          cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/liveness-test-0.2.5.apk"
           ls -la "$RUNNER_TEMP"/*.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: liveness-test-apk
-          path: ${{ runner.temp }}/liveness-test-0.2.4.apk
+          path: ${{ runner.temp }}/liveness-test-0.2.5.apk
           retention-days: 14

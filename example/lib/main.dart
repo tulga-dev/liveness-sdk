@@ -7,6 +7,7 @@
 // The server address is given when building:
 //   flutter run --dart-define=SERVER=https://YOUR-LIVENESS-SERVER
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -27,6 +28,7 @@ class _HomeState extends State<Home> {
   final _code = TextEditingController();
   String _result = 'Not run yet';
   String _reference = '';
+  List<Uint8List> _shots = const [];
   bool _busy = false;
   bool _mn = false, _debug = true;
 
@@ -59,6 +61,19 @@ class _HomeState extends State<Home> {
     } catch (e) {
       setState(() => _reference = 'Could not reach the server: $e');
     }
+  }
+
+  /// What the server measured in each uploaded photo, as text for a screenshot.
+  String _measured(dynamic d) {
+    if (d is! Map) return '';
+    final out = StringBuffer('\n\nServer measured (front, then each turn):');
+    for (final m in (d['measured'] as List? ?? const [])) {
+      out.write('\n  faces ${m['faces']}  left ${m['yaw_left']}°  up ${m['pitch_up']}°');
+    }
+    if (d['motion'] != null) out.write('\nMotion: ${d['motion']}');
+    if (d['photos_turned_deg'] != null) out.write('\nPhotos arrived turned ${d['photos_turned_deg']}°');
+    if (d['photos_mirrored'] == true) out.write('\nPhotos arrived mirrored');
+    return out.toString();
   }
 
   Future<void> _uploadReference() async {
@@ -96,6 +111,7 @@ class _HomeState extends State<Home> {
     }
     setState(() {
       _busy = true;
+      _shots = const [];
       _result = 'Creating session…';
     });
     try {
@@ -125,6 +141,7 @@ class _HomeState extends State<Home> {
         setState(() => _result = 'Cancelled');
         return;
       }
+      _shots = outcome.debugPhotos ?? const [];
       if (outcome.status != LivenessStatus.completed) {
         setState(() => _result = '${outcome.status.name}: ${outcome.detail ?? ''}');
         return;
@@ -145,7 +162,8 @@ class _HomeState extends State<Home> {
           'Reason: ${v['reason']}\n'
           'Turns asked: ${turns.join(', ')}\n'
           'Match with reference: ${score == null ? 'not checked' : '${(score as num).toStringAsFixed(2)} (needs ${v['face_match_threshold']})'}\n'
-          'Time taken: ${seconds.toStringAsFixed(1)} s');
+          'Time taken: ${seconds.toStringAsFixed(1)} s'
+          '${_measured(v['diagnostics'])}');
     } catch (e) {
       setState(() => _result = 'Error: $e');
     } finally {
@@ -178,9 +196,18 @@ class _HomeState extends State<Home> {
               const SizedBox(height: 8),
               FilledButton(onPressed: _busy ? null : _run, child: const Text('Start liveness check')),
               const SizedBox(height: 20),
-              Text(_result, style: const TextStyle(fontSize: 18)),
+              Text(_result, style: const TextStyle(fontSize: 16)),
+              if (_shots.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('Photos that were uploaded (front, then each turn):', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 6),
+                Row(children: [
+                  for (final s in _shots)
+                    Expanded(child: Padding(padding: const EdgeInsets.all(2), child: Image.memory(s, fit: BoxFit.contain))),
+                ]),
+              ],
               const SizedBox(height: 12),
-              const Text('SDK 0.2.4 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text('SDK 0.2.5 (motion bursts)', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ),
