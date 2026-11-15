@@ -8,7 +8,7 @@ read by your backend; the app is only told the upload is complete.
 On-device face tracking uses `face_detection_tflite` (MediaPipe models, Apache-2.0).
 It only guides the capture. The security decision is made by the server.
 
-**Status:** pilot. `stable` (0.1.0) has run end to end on an Android emulator. `main` and `beta` (0.2.0) add a burst of frames per head turn and are still being tested on devices.
+**Status:** pilot. `stable`, `main` and `beta` are all 0.2.5, which has passed end to end on a real iPhone (face match and motion check). Android has not yet been run on a real phone. If you installed an earlier version, update: versions before 0.2.5 do not work reliably on iPhone.
 
 The screen shows the face in a circle with a ring of tick marks. For each step the ticks on the
 side to turn towards light up as the head moves, and the photo is taken automatically when that
