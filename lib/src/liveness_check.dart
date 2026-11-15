@@ -172,6 +172,11 @@ class _LivenessCheckState extends State<LivenessCheck> {
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await cam.initialize();
+      // Never fire the flash. On an iPhone's front camera "auto" lights the whole screen in a dim room,
+      // which blinds the user, delays the photo until the head has moved back, and washes out the face.
+      try {
+        await cam.setFlashMode(FlashMode.off);
+      } catch (_) {}
       final detector = await FaceDetector.create(model: FaceDetectionModel.frontCamera);
       if (!mounted) {
         await cam.dispose();
